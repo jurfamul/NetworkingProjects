@@ -1,0 +1,7 @@
+Checking repository for jurfamul/networking_fall_2021_famula
+Directory exists (git clone success)!
+Git pull success!
+assignment1 directory exists!
+gcc main.cpp -o assignment1.bin
+Make unsuccessful
+Score 3 out of a possible 7

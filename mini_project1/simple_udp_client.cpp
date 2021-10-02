@@ -1,5 +1,10 @@
 /**
- * In-class demonstrated UDP client example.
+ * Jurgen Famula
+ * 10-1-2021
+ * Networking
+ * mini_project 1
+ *
+ * Modified In-class UDP client for mini_project 1.
  */
 
 #include <iostream>
@@ -123,6 +128,34 @@ int main(int argc, char *argv[]) {
    * Code to receive response from the server goes here!
    * recv or recvfrom...
    */
+
+  //stores the return value of the recvfrom function which is either the error code or the
+  //length of the message received from the server.
+  int rec;
+
+  //string buffer for the udp server response
+  static char recv_buff[2048];
+
+  int recv_buff_size = sizeof(recv_buff);
+
+  //set the size of the incoming address
+  socklen_t recv_address_size = sizeof(struct sockaddr_in);
+
+  rec = recvfrom(udp_socket, recv_buff, recv_buff_size, 0,
+                  (struct sockaddr *) &dest_addr, &recv_address_size);
+
+  if (rec == -1) {
+    std::cerr << "Failed to receive data!" << std::endl;
+    std::cerr << strerror(errno) << std::endl;
+    close(udp_socket);
+    return 1;
+  }
+
+  if (rec >= 0) {
+    std::cout << "message recieved from server." << std::endl;
+    std::cout << rec << " bytes received." << std::endl;
+    std::cout << std::string(recv_buff, rec-1) << std::endl;
+  }
 
   close(udp_socket);
   return 0;

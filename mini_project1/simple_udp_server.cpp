@@ -75,7 +75,7 @@ int main(int argc, char *argv[]) {
   // Set the address length to the appropriate size for an IPV4 address (sizeof(struct sockaddr_in))
   // Set the port to the network byte order of the port number
   dest.sin_family = AF_INET;
-  dest.sin_len = sizeof(struct sockaddr_in);
+  //dest.sin_len = sizeof(struct sockaddr_in);
   dest.sin_port = htons(port);
 
   // UDP Server Step 2: bind to the ip:port stored in dest

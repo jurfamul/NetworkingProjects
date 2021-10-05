@@ -2,6 +2,11 @@ Checking repository for jurfamul/networking_fall_2021_famula
 Directory exists (git clone success)!
 Git pull success!
 assignment1 directory exists!
-gcc main.cpp -o assignment1.bin
-Make unsuccessful
-Score 3 out of a possible 7
+g++ main.cpp -o assignment1.bin
+Make successful
+1c1
+< Hello World!/n
+\ No newline at end of file
+---
+> Hello World!
+Score 7 out of a possible 7

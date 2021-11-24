@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <iostream>
 
+#include "util.h"
+
 void handle_error(const char *context) {
     std::cerr << context << " failed with error:" << std::endl;
     std::cerr << strerror(errno) << std::endl;
@@ -44,3 +46,39 @@ const char *get_network_address(struct sockaddr *address, socklen_t addr_len) {
 
     return NULL;
 }
+
+int execute_command_get_response(const char *cmd, const char **return_buffer) {
+    FILE *file_pointer;
+    // max size for the command buffer
+    static char cmd_buf[MAX_CMD_BUFFER];
+    int bytes_read;
+
+    // Execute a command in a shell, then get a file handle to the result data.
+    // Be very careful with this, it's easy for someone to do something nasty!
+    file_pointer = popen(cmd, "r");
+    if (file_pointer == NULL) {
+        handle_error("popen");
+        std::cerr << "Failed to execute command: " << cmd << std::endl;
+        (*return_buffer) = NULL;
+        return 0;
+    }
+
+    // Read the output from the command into our buffer. If it's too big, truncate it.
+    bytes_read = fread(cmd_buf, 1, MAX_CMD_BUFFER, file_pointer);
+
+    if (bytes_read <= 0) {
+        std::cerr << "Failed to read any bytes from command pipe? ret was " << bytes_read << std::endl;
+        handle_error("fgets");
+        (*return_buffer) = NULL;
+        return 0;
+    }
+
+    std::cout << "Read " << bytes_read << " bytes of output from command " << cmd << std::endl;
+    std::cout << "Read data was: " << cmd_buf << std::endl;
+    cmd_buf[bytes_read] = '\0';
+    (*return_buffer) = cmd_buf;
+    // Close it, using pclose since we used popen!
+    pclose(file_pointer);
+    return bytes_read;
+}
+

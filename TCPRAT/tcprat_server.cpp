@@ -17,6 +17,7 @@
 #include <vector>
 #include <fcntl.h>
 #include <poll.h>
+#include <stdint.h>
 
 #include "util.h"
 #include "RAT.h"
@@ -28,12 +29,91 @@ struct TCPClient {
     int sock_fd;
     int poll_index;
     char recv_buf[RECEIVE_BUF_SIZE];
+    const char *cmd_output_buf;
     char send_buf[RECEIVE_BUF_SIZE];
     int bytes_to_send;
     int bytes_to_read;
+    int cmd_output_length;
     struct sockaddr client_address;
     socklen_t client_address_len;
+
+    //This vector stores the last 10 RAT commands the server has received from this client.
+    std::vector<std::string> history;
+    //This variable stores the current RAT request sent by the client
+    struct RATRequest *request;
 };
+
+void clear_client_request(struct TCPClient *client)
+{
+    client->request = NULL;
+    client->cmd_output_buf = NULL;
+    client->cmd_output_length = 0;
+}
+
+/***
+ * Send a list files request to a UDP RAT server.
+ *
+ * @param socket the socket to send data on (UDP)
+ * @param server_address the server destination address
+ * @return the number of bytes sent, or -1 on error.
+ */
+int send_RAT_response(struct TCPClient *client) {
+    const int message_size = sizeof(struct RATResponse) + client->cmd_output_length;
+
+    struct RATResponse rat_response;
+    rat_response.hdr.type = htons(RAT_REPLY);
+    rat_response.hdr.total_msg_size = htons(message_size);
+    rat_response.data_length = htons(client->cmd_output_length);
+    rat_response.response_type = htons(RESPONSE_OK);
+    rat_response.request_id = client->request->request_id;
+    //std::cout << "created rat_response" << std::endl;
+
+    //std::cout << "assigned the client's response variable to rat_response." << std::endl;
+
+    //Concatinate the RATResponse with the output buffer from the execute_command_get_response call and add them to the client's send buffer
+    //copy the ls_response into the message_buffer
+    memcpy(client->send_buf, &rat_response, sizeof(struct RATResponse));
+    //std::cout << "memcpy the rat_response into the client's send buffer." << std::endl;
+    //copy the cmd_output_buffer into the message_buffer
+    memcpy(client->send_buf+sizeof(RATResponse), client->cmd_output_buf, client->cmd_output_length);
+    //std::cout << "memcpy the cmd_output into the client's send buffer." << std::endl;
+
+    clear_client_request(client);
+    return message_size;
+}
+
+int send_RAT_error(struct TCPClient *client)
+{
+    const int message_size = sizeof(struct RATResponse);
+
+    struct RATResponse rat_response;
+    rat_response.hdr.type = htons(RAT_REPLY);
+    rat_response.hdr.total_msg_size = htons(message_size);
+    rat_response.data_length = htons(0);
+    rat_response.response_type = htons(RESPONSE_ERROR);
+    rat_response.request_id = client->request->request_id;
+
+    memcpy(client->send_buf, &rat_response, sizeof(struct RATResponse));
+    clear_client_request(client);
+    return message_size;
+}
+
+int send_RAT_error(struct TCPClient *client, std::string &error_message)
+{
+    const int message_size = sizeof(struct RATResponse) + error_message.size();
+
+    struct RATResponse rat_response;
+    rat_response.hdr.type = htons(RAT_REPLY);
+    rat_response.hdr.total_msg_size = htons(message_size);
+    rat_response.data_length = htons(error_message.size());
+    rat_response.response_type = htons(RESPONSE_ERROR);
+    rat_response.request_id = client->request->request_id;
+
+    memcpy(client->send_buf, &rat_response, sizeof(struct RATResponse));
+    memcpy(client->send_buf+sizeof(struct RATResponse), &error_message, error_message.size());
+    clear_client_request(client);
+    return message_size;
+}
 
 /**
  *
@@ -77,9 +157,6 @@ int main(int argc, char *argv[]) {
     timeout = 2000;
 
     std::vector<TCPClient *> tcp_clients;
-    std::vector<std::vector<std::string>> client_history;
-    std::vector<RATRequest *> rat_requests;
-    std::vector<RATResponse *> rat_responses;
 
     // Note: this needs to be 3, because the program name counts as an argument!
     if (argc < 3) {
@@ -213,7 +290,6 @@ int main(int argc, char *argv[]) {
             } else {
                 memcpy(&new_tcp_client->client_address, &client_address, client_address_len);
                 tcp_clients.push_back(new_tcp_client);
-                client_history.push_back(std::vector<std::string>());
                 std::cout << "Accepted connection from : "
                           << get_network_address(&new_tcp_client->client_address, new_tcp_client->bytes_to_read)
                           << "\n";
@@ -222,43 +298,11 @@ int main(int argc, char *argv[]) {
         }
 
         char temp_receive_buff[2048];
-        RATRequest *client_request = (RATRequest *) malloc(sizeof(struct RATRequest));
-        int client_request_size = sizeof(struct RATRequest);
         if (pfds[1].revents & POLLIN) {
             std::cout << "Data has been entered." << std::endl;
             ret = read(pfds[1].fd, temp_receive_buff, 2048);
             temp_receive_buff[ret] = '\0';
-            /*memcpy(client_request, temp_receive_buff, client_request_size);
-            rat_requests.push_back(client_request);
-            //extract the instance variables from the client_request struct.
-            uint16_t header_type = ntohs(client_request->hdr.type);
 
-            if (header_type == RAT_REQUEST) {
-                uint16_t total_request_size = ntohs(client_request->hdr.total_msg_size);
-                char *cmd;
-
-                std::cout << "Received RAT message type " << header_type << " with length " << total_request_size
-                          << std::endl;
-                std::cout << "Received server request type " << ntohs(client_request->req_type)
-                          << " with request id " << ntohl(client_request->request_id) << " of length "
-                          << ntohs(client_request->argument_length) << std::endl;
-
-                if (ret == total_request_size) {
-                    std::cout << "The server request seems legitimate. (message length and header type match)."
-                              << std::endl;
-                    //copy command string from the client request
-                    memcpy(cmd, temp_receive_buff + (total_request_size - client_request->argument_length),
-                           client_request->argument_length);
-
-                    const char** cmd_return_buffer;
-                    int return_code = execute_command_get_response(cmd, cmd_return_buffer);
-
-                    if (return_code == 0)
-                    {
-                        //the command encountered an error.
-                    }
-                }
-            }*/
         }
 
 
@@ -267,7 +311,7 @@ int main(int argc, char *argv[]) {
                 continue;
 
             if (pfds[tcp_clients[i]->poll_index].revents & POLLIN) {
-                //std::cout << "Ready to read from socket fd " << tcp_clients[i]->sock_fd << std::endl;
+                std::cout << "Ready to read from socket fd " << tcp_clients[i]->sock_fd << std::endl;
                 ret = recv(tcp_clients[i]->sock_fd, tcp_clients[i]->recv_buf, RECEIVE_BUF_SIZE, 0);
                 if (ret == -1) {
                     perror("recv");
@@ -284,39 +328,200 @@ int main(int argc, char *argv[]) {
                               << get_network_address(&tcp_clients[i]->client_address,
                                                      tcp_clients[i]->client_address_len)
                               << std::endl;
-                    memcpy(client_request, tcp_clients[i]->recv_buf, client_request_size);
-                    rat_requests.push_back(client_request);
-                    //extract the instance variables from the client_request struct.
-                    uint16_t header_type = ntohs(client_request->hdr.type);
+                    int client_request_size = sizeof(struct RATRequest);
+                    struct RATRequest *client_request = (RATRequest *) malloc(client_request_size);
+                    memset(client_request, 0, client_request_size);
+                    tcp_clients[i]->request = (RATRequest *) memcpy(client_request, &tcp_clients[i]->recv_buf, client_request_size);
+                    std::cout << "request copied." << std::endl;
+
+                    //extract the instance variables from the client_request struct to determine the type of request.
+                    uint16_t header_type = ntohs(tcp_clients[i]->request->hdr.type);
 
                     if (header_type == RAT_REQUEST) {
-                        uint16_t total_request_size = ntohs(client_request->hdr.total_msg_size);
-                        char *cmd;
+                        uint16_t total_request_size = ntohs(tcp_clients[i]->request->hdr.total_msg_size);
+                        uint16_t request_type = ntohs(tcp_clients[i]->request->req_type);
+                        uint16_t arg_length = ntohs(tcp_clients[i]->request->argument_length);
 
                         std::cout << "Received RAT message type " << header_type << " with length " << total_request_size
                                   << std::endl;
-                        std::cout << "Received server request type " << ntohs(client_request->req_type)
-                                  << " with request id " << ntohl(client_request->request_id) << " of length "
-                                  << ntohs(client_request->argument_length) << std::endl;
+                        std::cout << "Received server request type " << ntohs(tcp_clients[i]->request->req_type)
+                                  << " with request id " << ntohl(tcp_clients[i]->request->request_id) << " with an argument of length "
+                                  << ntohs(tcp_clients[i]->request->argument_length) << std::endl;
 
                         if (ret == total_request_size) {
                             std::cout << "The server request seems legitimate. (message length and header type match)."
                                       << std::endl;
-                            //copy command string from the client request
-                            /*memcpy(cmd, client_request,
-                                   ret);
-                            std::cout << cmd << std::endl;
 
-                            const char** cmd_return_buffer;
-                            int return_code = execute_command_get_response(cmd, cmd_return_buffer);
+                            const char *cmd;
+                            const char *arg;
+                            char hist_buf[RECEIVE_BUF_SIZE];
+                            int buffer_index = 0;
+                            // Execute the correct command based on the request type.
+                            switch (request_type) {
+                                case REQUEST_LIST_FILES:
+                                    cmd = "ls";
+                                    std::cout << "executing command " << cmd << " command" << std::endl;
+                                    tcp_clients[i]->cmd_output_length = execute_command_get_response(cmd,
+                                                                                                     &tcp_clients[i]->cmd_output_buf);
+                                    if (tcp_clients[i]->cmd_output_length == 0) {
+                                        std::cout << "Read " << tcp_clients[i]->cmd_output_length
+                                                  << " bytes of output from command " << cmd << std::endl;
+                                        std::cout << "Command " << cmd << " did not execute properly." << std::endl;
 
-                            if (return_code == 0)
-                            {
-                                //the command encountered an error.
-                            }*/
+                                        tcp_clients[i]->bytes_to_send = send_RAT_error(tcp_clients[i]);
+                                    }
+                                    else {
+                                        tcp_clients[i]->bytes_to_send = send_RAT_response(tcp_clients[i]);
+                                    }
+
+                                    cmd = "ls\n";
+                                    if (tcp_clients[i]->history.empty()) {
+                                        tcp_clients[i]->history.push_back(cmd);
+                                    } else {
+                                        tcp_clients[i]->history.insert(tcp_clients[i]->history.begin(),
+                                                                       cmd);
+                                    }
+
+                                    break;
+                                case REQUEST_EXECUTE_COMMAND:
+                                    //returns a c_string consisting of the run command concatenated with the argument passed by the client.
+                                    arg = std::string(tcp_clients[i]->recv_buf + client_request_size,
+                                                                           ret - client_request_size).c_str();
+                                    std::cout << "executing arbitrary command " << arg << std::endl;
+                                    tcp_clients[i]->cmd_output_length = execute_command_get_response(arg,
+                                                                                                     &tcp_clients[i]->cmd_output_buf);
+
+                                    //update client history
+                                    cmd = std::string("run " + std::string(tcp_clients[i]->recv_buf + client_request_size,
+                                                                           ret - client_request_size) + '\n').c_str();
+                                    if (tcp_clients[i]->history.empty()) {
+                                        tcp_clients[i]->history.push_back(cmd);
+                                    } else {
+                                        tcp_clients[i]->history.insert(tcp_clients[i]->history.begin(),
+                                                                       cmd);
+                                    }
+
+                                    if (tcp_clients[i]->cmd_output_length == 0) {
+                                        std::cout << "Read " << tcp_clients[i]->cmd_output_length
+                                                  << " bytes of output from command " << arg << std::endl;
+                                        std::string error_message = std::string("Command " + std::string(arg) + "could not be executed.\n");
+
+                                        tcp_clients[i]->bytes_to_send = send_RAT_error(tcp_clients[i], error_message);
+                                    }
+                                    else {
+                                        tcp_clients[i]->bytes_to_send = send_RAT_response(tcp_clients[i]);
+                                    }
+                                    break;
+                                case REQUEST_CHANGE_DIR:
+                                    cmd = std::string("cd " + std::string(tcp_clients[i]->recv_buf + client_request_size,
+                                                                          ret - client_request_size)).c_str();
+                                    std::cout << "executing " << cmd << " command" << std::endl;
+                                    tcp_clients[i]->cmd_output_length = execute_command_get_response(cmd,
+                                                                                                     &tcp_clients[i]->cmd_output_buf);
+                                    if (tcp_clients[i]->cmd_output_length == 0) {
+                                        std::cout << "Read " << tcp_clients[i]->cmd_output_length
+                                                  << " bytes of output from command " << cmd << std::endl;
+                                        std::string error = std::string("could not cd to " + std::string(tcp_clients[i]->recv_buf + client_request_size,
+                                                                                                         ret - client_request_size) + '\n');
+
+                                        tcp_clients[i]->bytes_to_send = send_RAT_error(tcp_clients[i], error);
+                                    }
+                                    else {
+                                        tcp_clients[i]->bytes_to_send = send_RAT_response(tcp_clients[i]);
+                                    }
+
+                                    cmd = std::string("cd " + std::string(tcp_clients[i]->recv_buf + client_request_size,
+                                                                          ret - client_request_size) + '\n').c_str();
+                                    if (tcp_clients[i]->history.empty()) {
+                                        tcp_clients[i]->history.push_back(cmd);
+                                    } else {
+                                        tcp_clients[i]->history.insert(tcp_clients[i]->history.begin(),
+                                                                       cmd);
+                                    }
+
+                                    break;
+                                case REQUEST_PWD:
+                                    cmd = "pwd";
+
+                                    std::cout << "executing " << cmd << " command" << std::endl;
+                                    tcp_clients[i]->cmd_output_length = execute_command_get_response(cmd,
+                                                                                                     &tcp_clients[i]->cmd_output_buf);
+                                    if (tcp_clients[i]->cmd_output_length == 0) {
+                                        std::cout << "Read " << tcp_clients[i]->cmd_output_length
+                                                  << " bytes of output from command " << cmd << std::endl;
+                                        std::cout << "Command " << cmd << " did not execute properly." << std::endl;
+
+                                        tcp_clients[i]->bytes_to_send = send_RAT_error(tcp_clients[i]);
+                                    }
+                                    else {
+                                        tcp_clients[i]->bytes_to_send = send_RAT_response(tcp_clients[i]);
+                                    }
+
+                                    cmd = "pwd\n";
+                                    if (tcp_clients[i]->history.empty()) {
+                                        tcp_clients[i]->history.push_back(cmd);
+                                    } else {
+                                        tcp_clients[i]->history.insert(tcp_clients[i]->history.begin(),
+                                                                       cmd);
+                                    }
+
+                                    break;
+                                case REQUEST_SHOW_HISTORY:
+                                    cmd = "history";
+                                    std::cout << "executing " << cmd << " command" << std::endl;
+                                    cmd = "history\n";
+                                    if (tcp_clients[i]->history.empty()) {
+                                        tcp_clients[i]->history.push_back(cmd);
+                                    } else {
+                                        tcp_clients[i]->history.insert(tcp_clients[i]->history.begin(),
+                                                                       cmd);
+                                    }
+                                    tcp_clients[i]->cmd_output_length = 0;
+                                    if (tcp_clients[i]->history.size() <= 10) {
+                                        for (int j = tcp_clients[i]->history.size()-1; j >= 0; j--) {
+                                            for (int k = 0; k < tcp_clients[i]->history[j].size(); k++)
+                                            {
+                                                hist_buf[buffer_index] = tcp_clients[i]->history[j].at(k);
+
+                                                //add the null terminator as the final character
+                                                if (j == 0 and k == tcp_clients[i]->history[j].size()-1)
+                                                {
+                                                    hist_buf[buffer_index+1] = '\0';
+                                                }
+                                                buffer_index++;
+                                            }
+                                        }
+                                    } else {
+                                        for (int j = tcp_clients[i]->history.size()-1; j >= 0; j--) {
+                                            for (int k = 0; k < tcp_clients[i]->history[j].size(); k++)
+                                            {
+                                                hist_buf[buffer_index] = tcp_clients[i]->history[j].at(k);
+
+                                                //add the null terminator as the final character
+                                                if (j == 0 and k == tcp_clients[i]->history[j].size()-1)
+                                                {
+                                                    hist_buf[buffer_index+1] = '\0';
+                                                }
+                                                buffer_index++;
+                                            }
+                                        }
+                                    }
+
+                                    //assign the history buffer and buffer_index values to client->cmd_output_buf and client->cmd_output_length.
+                                    tcp_clients[i]->cmd_output_buf = hist_buf;
+                                    tcp_clients[i]->cmd_output_length = buffer_index;
+
+                                    tcp_clients[i]->bytes_to_send = send_RAT_response(tcp_clients[i]);
+                                    break;
+                                default:
+                                    std::cerr << "Unknown request type?" << std::endl;
+                                    return 1;
+                            }
                         }
                     }
 
+                    free(client_request);
+                    client_request = NULL;
                 }
             }
 
@@ -327,7 +532,7 @@ int main(int argc, char *argv[]) {
                 std::cout << "Ready to write to socket fd " << tcp_clients[i]->sock_fd << std::endl;
                 if (tcp_clients[i]->bytes_to_send > 0) {
                     ret = send(tcp_clients[i]->sock_fd, tcp_clients[i]->send_buf, tcp_clients[i]->bytes_to_send, 0);
-                    //std::cout << "Wrote " << ret << " bytes on fd " << tcp_clients[i]->sock_fd << std::endl;
+                    std::cout << "Wrote " << ret << " bytes on fd " << tcp_clients[i]->sock_fd << std::endl;
                     if (ret == tcp_clients[i]->bytes_to_send) {
                         tcp_clients[i]->bytes_to_send = 0;
                     }

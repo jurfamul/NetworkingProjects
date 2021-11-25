@@ -2,8 +2,8 @@
 // Created by Nathan Evans on 10/5/21.
 //
 
-#ifndef MINI_PROJECT2_RAT_H
-#define MINI_PROJECT2_RAT_H
+#ifndef MINI_PROJECT2_SERVER_RAT_H
+#define MINI_PROJECT2_SERVER_RAT_H
 
 #include <stdint.h>
 
@@ -76,4 +76,4 @@ struct RATResponse {
     /* Optional argument data follows */
 };
 
-#endif //MINI_PROJECT2_RAT_H
+#endif //MINI_PROJECT2_SERVER_RAT_H

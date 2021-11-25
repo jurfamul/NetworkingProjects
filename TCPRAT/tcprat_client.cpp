@@ -32,6 +32,7 @@
  */
 int send_list_files(int socket, int id) {
     int bytes_sent;
+    std::cout << "request id is " << id << std::endl;
 
     struct RATRequest ls_request;
     ls_request.hdr.type = htons(RAT_REQUEST);
@@ -145,8 +146,6 @@ int main(int argc, char *argv[]) {
 
     /* buffer to use for receiving data */
     static char recv_buf[DEFAULT_BUF_SIZE];
-    /* buffer to use for sending data */
-    static char send_buf[DEFAULT_BUF_SIZE];
 
     if (argc < 3) {
         std::cerr << "Provide IP PORT to connect to as first two arguments." << std::endl;
@@ -219,7 +218,7 @@ int main(int argc, char *argv[]) {
     while (true) {
 
         std::string input_str;
-        std::cout << "Please enter a valid server command or quit." << std::endl;
+        //std::cout << "Please enter a valid server command or quit." << std::endl;
         getline(std::cin, input_str);
 
         if (input_str.compare("quit") == 0) {
@@ -293,7 +292,6 @@ int main(int argc, char *argv[]) {
         // If we get here, it means that we are successfully connected to a server somewhere! Yay!!!
         // That means we can send just by using the socket, as it's already connected.
 
-        //ret = send(tcp_socket, data_str, strlen(data_str), 0);
         std::cout << "sent " << ret << " bytes to server" << std::endl;
 
         //RATResponse struct to store the RATMessage sent by the server.
